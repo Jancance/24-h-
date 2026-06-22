@@ -1,0 +1,27 @@
+# CCS build outputs
+**/Debug/
+**/Release/
+*.o
+*.out
+*.map
+*.d
+*.d_raw
+*.hex
+*.bin
+*_linkInfo.xml
+
+# Generated code-index files and local editor settings
+**/compile_commands.json
+**/.clangd/
+**/.clangd
+**/.vscode/
+
+# Codex local workspace state
+.agents/
+.codex/
+
+# Windows temporary files
+Thumbs.db
+Desktop.ini
+*.log
+*.tmp

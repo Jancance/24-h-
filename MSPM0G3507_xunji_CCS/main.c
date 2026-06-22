@@ -15,7 +15,7 @@ extern float speed_2;
 /*
  * 当前选中的比赛任务模式。
  *
- * 默认选目标二；MODE 键按目标一、目标二、目标三的顺序循环切换。
+ * 默认选目标二；MODE 键按目标一、目标二、目标三、目标四的顺序循环切换。
  */
 static track_mode_t current_mode = TRACK_MODE_ABCD;
 
@@ -112,10 +112,10 @@ int main(void)
     show_menu();
 
     while (1) {
-        /* MODE：停车菜单中按 1 -> 2 -> 3 -> 1 循环切换比赛目标。 */
+        /* MODE：停车菜单中按 1 -> 2 -> 3 -> 4 -> 1 循环切换比赛目标。 */
         if (get_key_mode_state()) {
             wait_key_release();
-            if (current_mode == TRACK_MODE_ACBD) {
+            if (current_mode == TRACK_MODE_ACBD_4LAPS) {
                 current_mode = TRACK_MODE_AB;
             } else {
                 current_mode = (track_mode_t)((int)current_mode + 1);

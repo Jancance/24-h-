@@ -10,7 +10,8 @@
 typedef enum {
     TRACK_MODE_AB = 1,       /* 目标一：A -> B */
     TRACK_MODE_ABCD = 2,     /* 目标二：A -> B -> C -> D -> A */
-    TRACK_MODE_ACBD = 3      /* 目标三：A -> C -> B -> D -> A */
+    TRACK_MODE_ACBD = 3,     /* 目标三：A -> C -> B -> D -> A */
+    TRACK_MODE_ACBD_4LAPS = 4 /* 目标四：按目标三路线连续行驶 4 圈 */
 } track_mode_t;
 
 /*
@@ -30,6 +31,7 @@ void track_task_init(void);
  *   TRACK_MODE_AB：目标一。
  *   TRACK_MODE_ABCD：目标二。
  *   TRACK_MODE_ACBD：目标三。
+ *   TRACK_MODE_ACBD_4LAPS：目标四。
  */
 void track_task_run(track_mode_t mode);
 

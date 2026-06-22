@@ -12,12 +12,16 @@
  * 目标一：A -> B。
  * 目标二：A -> B -> C -> D -> A。
  * 目标三：A -> C -> B -> D -> A。
+ * 目标四：按目标三路线连续行驶 4 圈。
  *
  * 直线段用编码器判断距离，用 MPU6050 保持车头方向；
  * 圆弧段用 8 路灰度循迹。路线只会设置两个电机前进，不会倒车。
  */
 
 static uint8_t mpu_ready = 0U;
+
+/* 目标三和目标四共用路线函数，但各自使用不同的整项超时上限。 */
+static uint32_t target34_timeout_ms = CAR_TARGET3_TIMEOUT_MS;
 
 typedef enum {
     TRACK_TURN_LEFT = 0,
@@ -350,7 +354,7 @@ static uint8_t track_drive_target3_diagonal(uint32_t *elapsed_ms)
         float distance_mm = motor_get_average_distance_mm();
         float base_speed = CAR_STRAIGHT_BASE_SPEED;
 
-        if (*elapsed_ms >= CAR_TARGET3_TIMEOUT_MS) {
+        if (*elapsed_ms >= target34_timeout_ms) {
             UART_send_string(DEBUG_INST, "target3 timeout\r\n");
             return 0U;
         }
@@ -417,7 +421,7 @@ static uint8_t track_turn_target3_to_line(track_turn_direction_t direction,
     while (turn_elapsed_ms < CAR_TARGET3_TURN_TIMEOUT_MS) {
         float yaw_abs;
 
-        if (*elapsed_ms >= CAR_TARGET3_TIMEOUT_MS) {
+        if (*elapsed_ms >= target34_timeout_ms) {
             UART_send_string(DEBUG_INST, "target3 timeout in line turn\r\n");
             return 0U;
         }
@@ -470,7 +474,7 @@ static uint8_t track_turn_target3_by_angle(track_turn_direction_t direction,
     track_begin_target3_turn(direction);
 
     while (turn_elapsed_ms < CAR_TARGET3_TURN_TIMEOUT_MS) {
-        if (*elapsed_ms >= CAR_TARGET3_TIMEOUT_MS) {
+        if (*elapsed_ms >= target34_timeout_ms) {
             UART_send_string(DEBUG_INST, "target3 timeout in angle turn\r\n");
             return 0U;
         }
@@ -500,7 +504,7 @@ static uint8_t track_drive_target3_arc(uint32_t *elapsed_ms)
     while (motor_get_average_distance_mm() < CAR_TARGET2_ARC_MAX_MM) {
         float distance_mm = motor_get_average_distance_mm();
 
-        if (*elapsed_ms >= CAR_TARGET3_TIMEOUT_MS) {
+        if (*elapsed_ms >= target34_timeout_ms) {
             UART_send_string(DEBUG_INST, "target3 timeout in arc\r\n");
             return 0U;
         }
@@ -525,10 +529,58 @@ static uint8_t track_drive_target3_arc(uint32_t *elapsed_ms)
 }
 
 /*
- * 目标三完整状态流程：
+ * 目标三、目标四共用的一圈路线：
  *   A->C 斜线；C 左转抓右圆弧；C->B 循迹；B 左转进入 B->D 斜线；
- *   D 右转抓左圆弧；D->A 循迹，最后在 A 停车提示。
+ *   D 右转抓左圆弧；D->A 循迹。函数成功返回时，小车刚到 A，但尚未停车。
  */
+static uint8_t track_run_target34_one_lap(uint32_t *elapsed_ms)
+{
+    track_begin_straight();
+    if (!track_drive_target3_diagonal(elapsed_ms)) {
+        track_fail_signal("A->C failed");
+        return 0U;
+    }
+
+    /* 已提前降速；提示期间继续左转并用灰度寻找 C->B 圆弧。 */
+    track_point_signal_async("C pass");
+    if (!track_turn_target3_to_line(TRACK_TURN_LEFT, elapsed_ms)) {
+        track_fail_signal("C turn failed");
+        return 0U;
+    }
+    track_begin_target2_arc();
+    if (!track_drive_target3_arc(elapsed_ms)) {
+        track_fail_signal("C->B failed");
+        return 0U;
+    }
+
+    /* 到 B 后一边声光提示，一边低速左转约 38.7 度，对准 D。 */
+    track_point_signal_async("B pass");
+    if (!track_turn_target3_by_angle(TRACK_TURN_LEFT, elapsed_ms)) {
+        track_fail_signal("B turn failed");
+        return 0U;
+    }
+    track_begin_straight();
+    if (!track_drive_target3_diagonal(elapsed_ms)) {
+        track_fail_signal("B->D failed");
+        return 0U;
+    }
+
+    /* D 点需要向右调整车头，灰度居中后沿左侧半圆回到 A。 */
+    track_point_signal_async("D pass");
+    if (!track_turn_target3_to_line(TRACK_TURN_RIGHT, elapsed_ms)) {
+        track_fail_signal("D turn failed");
+        return 0U;
+    }
+    track_begin_target2_arc();
+    if (!track_drive_target3_arc(elapsed_ms)) {
+        track_fail_signal("D->A failed");
+        return 0U;
+    }
+
+    return 1U;
+}
+
+/* 目标三：共用路线只跑一圈，到 A 后停车并做完整终点提示。 */
 static void track_run_target3_acbda(void)
 {
     uint32_t elapsed_ms = 0U;
@@ -539,50 +591,13 @@ static void track_run_target3_acbda(void)
         return;
     }
 
+    target34_timeout_ms = CAR_TARGET3_TIMEOUT_MS;
     UART_send_string(DEBUG_INST, "target3 A->C->B->D->A start\r\n");
     UART_send_string(DEBUG_INST, "place car facing C\r\n");
     track_point_signal("A start");
     elapsed_ms += CAR_POINT_SIGNAL_MS;
-    track_begin_straight();
 
-    if (!track_drive_target3_diagonal(&elapsed_ms)) {
-        track_fail_signal("A->C failed");
-        return;
-    }
-
-    /* 已提前降速；提示期间继续左转并用灰度寻找 C->B 圆弧。 */
-    track_point_signal_async("C pass");
-    if (!track_turn_target3_to_line(TRACK_TURN_LEFT, &elapsed_ms)) {
-        track_fail_signal("C turn failed");
-        return;
-    }
-    track_begin_target2_arc();
-    if (!track_drive_target3_arc(&elapsed_ms)) {
-        track_fail_signal("C->B failed");
-        return;
-    }
-
-    /* 到 B 后一边声光提示，一边低速左转约 38.7 度，对准 D。 */
-    track_point_signal_async("B pass");
-    if (!track_turn_target3_by_angle(TRACK_TURN_LEFT, &elapsed_ms)) {
-        track_fail_signal("B turn failed");
-        return;
-    }
-    track_begin_straight();
-    if (!track_drive_target3_diagonal(&elapsed_ms)) {
-        track_fail_signal("B->D failed");
-        return;
-    }
-
-    /* D 点需要向右调整车头，灰度居中后沿左侧半圆回到 A。 */
-    track_point_signal_async("D pass");
-    if (!track_turn_target3_to_line(TRACK_TURN_RIGHT, &elapsed_ms)) {
-        track_fail_signal("D turn failed");
-        return;
-    }
-    track_begin_target2_arc();
-    if (!track_drive_target3_arc(&elapsed_ms)) {
-        track_fail_signal("D->A failed");
+    if (!track_run_target34_one_lap(&elapsed_ms)) {
         return;
     }
 
@@ -591,6 +606,56 @@ static void track_run_target3_acbda(void)
     motor_stop_all();
     track_point_signal("A stop");
     UART_send_string(DEBUG_INST, "target3 finished\r\n");
+}
+
+/*
+ * 目标四：连续跑 4 圈。
+ * 前 3 圈回到 A 后不停车，声光提示期间右转约 38.7 度，对准下一圈的 A->C；
+ * 第 4 圈回到 A 后才停车。这样既满足每次过点提示，也省掉圈间等待时间。
+ */
+static void track_run_target4_four_laps(void)
+{
+    uint32_t elapsed_ms = 0U;
+
+    if (mpu_ready == 0U) {
+        track_fail_signal("target4 needs MPU6050");
+        return;
+    }
+
+    target34_timeout_ms = CAR_TARGET4_TIMEOUT_MS;
+    UART_send_string(DEBUG_INST, "target4 four laps start\r\n");
+    UART_send_string(DEBUG_INST, "place car facing C\r\n");
+
+    /* 起点提示也采用非阻塞方式，提示期间第一圈已经开始直行。 */
+    track_point_signal_async("A lap 1 start");
+
+    for (uint8_t lap = 0U; lap < CAR_TARGET4_LAP_COUNT; lap++) {
+        char lap_message[] = "target4 lap 1 start\r\n";
+        lap_message[12] = (char)('1' + lap);
+        UART_send_string(DEBUG_INST, lap_message);
+
+        if (!track_run_target34_one_lap(&elapsed_ms)) {
+            return;
+        }
+
+        if ((lap + 1U) < CAR_TARGET4_LAP_COUNT) {
+            /*
+             * D->A 圆弧结束时车头沿切线朝右；下一圈 A->C 斜向右下，
+             * 因此在 A 点保持前进并右转约 38.7 度，然后直接进入下一圈。
+             */
+            track_point_signal_async("A lap pass");
+            if (!track_turn_target3_by_angle(TRACK_TURN_RIGHT, &elapsed_ms)) {
+                track_fail_signal("A lap turn failed");
+                return;
+            }
+        }
+    }
+
+    buzzer_signal_stop();
+    motor_set_line_follow_enabled(0U);
+    motor_stop_all();
+    track_point_signal("A stop");
+    UART_send_string(DEBUG_INST, "target4 finished\r\n");
 }
 
 void track_task_init(void)
@@ -613,7 +678,7 @@ void track_task_init(void)
     }
 }
 
-/* 根据菜单选中的 mode 进入目标一、目标二或目标三，非法编号直接停车。 */
+/* 根据菜单选中的 mode 进入目标一到目标四，非法编号直接停车。 */
 void track_task_run(track_mode_t mode)
 {
     if (mode == TRACK_MODE_AB) {
@@ -622,6 +687,8 @@ void track_task_run(track_mode_t mode)
         track_run_target2_abcd();
     } else if (mode == TRACK_MODE_ACBD) {
         track_run_target3_acbda();
+    } else if (mode == TRACK_MODE_ACBD_4LAPS) {
+        track_run_target4_four_laps();
     } else {
         track_fail_signal("unsupported target");
     }
